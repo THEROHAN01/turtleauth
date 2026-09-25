@@ -7,21 +7,24 @@ this one is mechanical.
 
 ## Sprint model
 
-One sprint = one shippable capability. Sprints map to the roadmap's modules, but a module
-with a large practical (Module 1, Module 6) splits into several.
+**One sprint = one module.** Six modules, six sprints. A sprint ships a complete
+capability, and the roadmap's module boundaries already mark where one capability ends
+and the next begins.
 
 ```
-Module 1 ─┬─ Sprint 1   password auth + in-memory sessions + HTTP layer
-          └─ Sprint 2   Postgres persistence
-Module 2 ─── Sprint 3   JWT access + refresh tokens
-Module 3 ─┬─ Sprint 4   attack lab (break it)
-          └─ Sprint 5   rate limiting + hardening (fix it)
-Module 4 ─── Sprint 6   OAuth 2.0 + OIDC + Google login
-Module 5 ─┬─ Sprint 7   MFA / TOTP
-          └─ Sprint 8   passkeys + RBAC
-Module 6 ─┬─ Sprint 9   production hardening + Docker
-          └─ Sprint 10  docs + OpenAPI + example clients
+Sprint 1  ──  Module 1   Authentication Foundations
+              password auth, sessions, cookies, HTTP layer, Postgres
+
+Sprint 2  ──  Module 2   JWT + Token Architecture
+Sprint 3  ──  Module 3   Web Security + Auth Attacks
+Sprint 4  ──  Module 4   OAuth 2.0 + OIDC + Social Login
+Sprint 5  ──  Module 5   MFA + Passkeys + Authorization
+Sprint 6  ──  Module 6   Production Auth Service + System Design
 ```
+
+Work within a sprint ships incrementally — `v0.1.0` was password auth on in-memory
+storage, `v0.1.1` adds Postgres — but the sprint is not complete until the whole module's
+practical is done.
 
 A sprint is done when: tests pass, typecheck is clean, notes are written, and the
 capability works end-to-end against a running server — not just in unit tests.
@@ -30,18 +33,21 @@ capability works end-to-end against a running server — not just in unit tests.
 
 ## Version numbers
 
-`0.MINOR.PATCH` while pre-1.0. **Minor = sprint number.**
+`0.MINOR.PATCH` while pre-1.0. **Minor = sprint number = module number.**
 
 ```
-0.1.0   Sprint 1    password auth + sessions
-0.2.0   Sprint 2    Postgres
-0.3.0   Sprint 3    JWT
-...
-1.0.0   after Sprint 10 — the service is usable by another application
+0.1.0   Sprint 1   password auth + in-memory sessions
+0.1.1   Sprint 1   + Postgres persistence          <- same sprint, incremental
+0.2.0   Sprint 2   JWT access + refresh tokens
+0.3.0   Sprint 3   attack lab + rate limiting
+0.4.0   Sprint 4   OAuth 2.0 + OIDC
+0.5.0   Sprint 5   MFA + passkeys + RBAC
+0.6.0   Sprint 6   production hardening + docs
+1.0.0              the service is usable by another application
 ```
 
-Patch bumps are fixes within a shipped sprint (`0.1.1`). The version in `package.json`
-always reflects the last *completed* sprint.
+Patch bumps carry incremental work inside an in-progress sprint, as well as fixes to a
+shipped one. `package.json` always reflects what is on `main`.
 
 ---
 
@@ -92,21 +98,21 @@ git log --oneline                   # still readable
 `main` is the trunk. Feature work uses:
 
 ```
-sprint-<n>/<short-slug>      sprint-2/postgres-store
+sprint-<n>/<short-slug>      sprint-1/postgres-store
 fix/<short-slug>             fix/cookie-clear-path
 ```
 
-Sprint 1 was built directly on `main` — acceptable while solo and pre-1.0, but sprints
-from 2 onward branch, so `main` always holds a working service.
+Sprint 1's first increment was built directly on `main` — acceptable while solo and
+pre-1.0. Later increments branch, so `main` always holds a working service.
 
 ---
 
 ## Tags
 
-Tag `main` at the end of each sprint:
+Tag `main` at each shippable increment, and at the end of each sprint:
 
 ```bash
-git tag -a v0.1.0 -m "Sprint 1: password auth + in-memory sessions"
+git tag -a v0.1.1 -m "Sprint 1: Postgres persistence"
 ```
 
 Tags are what make "show me the service as it was before JWTs existed" a one-command
