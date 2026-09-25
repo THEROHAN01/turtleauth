@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: turtleauth-db
+    restart: unless-stopped
+    ports:
+      # 5434 on the host: 5432 is a common default and 5433 is taken by another
+      # local project. The container still listens on 5432 internally.
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: turtleauth
+      POSTGRES_USER: turtleauth
+      # Local development only. Real credentials never live in a committed file.
+      POSTGRES_PASSWORD: turtleauth
+    volumes:
+      - turtleauth-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Without this, `docker compose up -d` returns as soon as the container STARTS,
+      # not when Postgres is ready to accept connections — so the next command
+      # (a migration) races the database and fails intermittently.
+      test: ["CMD-SHELL", "pg_isready -U turtleauth -d turtleauth"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  turtleauth-pgdata:

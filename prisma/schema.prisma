@@ -1,0 +1,89 @@
+// TurtleAuth schema — Module 1 tables only.
+// Module 6 adds the remaining thirteen (oauth_accounts, roles, permissions,
+// mfa_methods, passkeys, audit_logs, ...).
+
+generator client {
+  provider        = "prisma-client-js"
+  // Required to declare `extensions` on the datasource, which is how citext gets
+  // created by the migration rather than by a manual CREATE EXTENSION.
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [citext]
+}
+
+/// Identity. Deliberately holds NO password hash — credentials are separate, because
+/// one identity holds many credentials (password now; passkey and OAuth in Module 5).
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  /// Citext makes uniqueness case-insensitive AT THE DATABASE, so a future code path
+  /// that forgets normaliseEmail() still cannot create a duplicate account.
+  /// The application also lowercases, for consistent storage. Belt and braces.
+  email           String    @unique @db.Citext
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  credentials Credential[]
+  sessions    Session[]
+
+  @@map("users")
+}
+
+enum CredentialType {
+  password
+
+  @@map("credential_type")
+}
+
+/// Proof of control over an identity. One row per (user, type).
+model Credential {
+  id     String         @id @default(uuid()) @db.Uuid
+  userId String         @map("user_id") @db.Uuid
+  type   CredentialType
+
+  /// Self-describing hash: algorithm, version, params and salt are all encoded in the
+  /// one string, which is what makes transparent rehash-on-login possible.
+  secret String
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Cascade: deleting a user must not strand their credentials. The database enforces
+  /// this rather than application code remembering to.
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// A user holds at most one credential of each type.
+  @@unique([userId, type])
+  @@map("credentials")
+}
+
+/// Server-side session truth. The cookie carries only `id`.
+model Session {
+  /// The 256-bit CSPRNG value itself, not a surrogate key. It is already unique and
+  /// unguessable; a separate uuid would mean two keys and an extra index for nothing.
+  id     String @id
+  userId String @map("user_id") @db.Uuid
+
+  /// Absolute deadline. Checked server-side — the cookie's Max-Age is only a hint.
+  expiresAt   DateTime @map("expires_at")
+  /// Drives the idle timeout, slid on activity past a staleness threshold.
+  lastSeenAt  DateTime @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  /// Audit signals. Never an authentication decision on their own.
+  ip        String?
+  userAgent String? @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Backs logoutAll without a full table scan — the database equivalent of the
+  /// hand-maintained byUser index the in-memory store needed.
+  @@index([userId])
+  /// For the reaper: DELETE WHERE expires_at < now().
+  /// Not yet implemented — see issue #1.
+  @@index([expiresAt])
+  @@map("sessions")
+}
