@@ -16,10 +16,10 @@ Legend: `[x]` written · `[~]` in progress · `[ ]` not started
 - [x] [1 — Authentication Fundamentals](module-1-authentication-foundations/1-authentication-fundamentals/notes.md)
 - [x] [2 — Password Authentication](module-1-authentication-foundations/2-password-authentication/notes.md)
 - [x] [3 — Password Hashing Algorithms](module-1-authentication-foundations/3-password-hashing-algorithms/notes.md)
-- [ ] 4 — HTTP Authentication
-- [ ] 5 — Cookie Security
-- [ ] 6 — Session Authentication
-- [ ] 7 — Session Storage
+- [x] [4 — HTTP Authentication](module-1-authentication-foundations/4-http-authentication/notes.md)
+- [x] [5 — Cookie Security](module-1-authentication-foundations/5-cookie-security/notes.md)
+- [x] [6 — Session Authentication](module-1-authentication-foundations/6-session-authentication/notes.md)
+- [x] [7 — Session Storage](module-1-authentication-foundations/7-session-storage/notes.md)
 
 ### Module 2 — JWT + Token Architecture
 - [ ] 1 — JWT Fundamentals
