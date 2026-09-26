@@ -34,8 +34,19 @@ export function createPrismaClient(options: DbOptions = {}): PrismaClient {
 
   const adapter = new PrismaPg({ connectionString, max: poolMax })
 
-  return new PrismaClient({
+  const client = new PrismaClient({
     adapter,
-    log: logQueries ? [{ emit: 'stdout', level: 'query' }] : [],
+    // 'event' rather than 'stdout': the raw QueryEvent carries bound params, which for
+    // this schema means session tokens, emails and password hashes verbatim. We log
+    // only the query shape and duration, never `event.params`.
+    log: logQueries ? [{ emit: 'event', level: 'query' }] : [],
   })
+
+  if (logQueries) {
+    client.$on('query', (event) => {
+      console.log(`${event.query} (${event.duration}ms)`)
+    })
+  }
+
+  return client
 }
