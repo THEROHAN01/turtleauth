@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../app.js'
 import { Argon2Hasher } from '../lib/hashing/argon2-hasher.js'
 import { DEFAULT_SESSION_POLICY } from '../services/auth-service.js'
+import { createTestDb, truncateAll, type TestDb } from '../test/db.js'
 
 /**
  * HTTP-level tests using app.inject() — Fastify's in-process request simulator.
@@ -12,11 +13,26 @@ import { DEFAULT_SESSION_POLICY } from '../services/auth-service.js'
 
 const fastHasher = new Argon2Hasher({ memoryCost: 8192, timeCost: 1, parallelism: 1 })
 
+let db: TestDb
 let app: FastifyInstance
 
-beforeEach(() => {
+beforeAll(async () => {
+  db = await createTestDb()
+})
+
+afterAll(async () => {
+  await db.cleanup()
+})
+
+beforeEach(async () => {
+  await truncateAll(db.prisma)
   // secureCookies:true so we exercise the real __Host- prefixed name.
-  app = buildApp({ hasher: fastHasher, secureCookies: true, logger: false })
+  app = buildApp({
+    hasher: fastHasher,
+    secureCookies: true,
+    logger: false,
+    prisma: db.prisma,
+  })
 })
 
 const CREDS = { email: 'rohan@kpoint.com', password: 'correct horse battery staple' }
@@ -195,6 +211,7 @@ describe('GET /auth/me', () => {
       hasher: fastHasher,
       secureCookies: true,
       logger: false,
+      prisma: db.prisma,
       sessionPolicy: { ...DEFAULT_SESSION_POLICY, absoluteLifetimeMs: 1 },
     })
 
