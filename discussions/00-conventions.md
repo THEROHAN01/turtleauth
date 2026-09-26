@@ -26,8 +26,9 @@ Work within a sprint ships incrementally — `v0.1.0` was password auth on in-me
 storage, `v0.1.1` adds Postgres — but the sprint is not complete until the whole module's
 practical is done.
 
-A sprint is done when: tests pass, typecheck is clean, notes are written, and the
-capability works end-to-end against a running server — not just in unit tests.
+A sprint is done when: tests pass, typecheck is clean, notes are written, `challenges/`
+records what went wrong, and the capability works end-to-end against a running server —
+not just in unit tests.
 
 ---
 
@@ -126,10 +127,19 @@ through history.
 
 ```
 discussions/<nn>-<topic>.md      design BEFORE code — questions answered first
-notes/module-<n>-.../notes.md    learning notes, written or revised AFTER code
+notes/module-<n>-.../notes.md    learning concepts, written or revised AFTER code
+challenges/sprint-<n>.md         what went wrong DURING the sprint
 ```
 
-Notes written before implementation get an **"What implementation added"** section
+Notes written before implementation get a **"What implementation added"** section
 appended once the code exists, rather than being rewritten. The original theory and what
 building it actually taught are both worth keeping, and the gap between them is often the
 most useful part.
+
+`challenges/` is the third leg: what the plan did not survive contact with. Errors, dead
+ends, tools behaving differently than documented, and bugs whose symptom pointed away
+from the cause — each with the transferable lesson and roughly what it cost.
+
+Written **during or immediately after** the sprint. Written later, the confusion is
+already forgotten and only the tidy version survives, which is the part worth the least.
+A sprint is not done until its challenges file exists.
