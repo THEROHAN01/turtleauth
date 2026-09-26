@@ -10,7 +10,7 @@ import { config } from '../config.js'
  * benefit is that the pool is ours — we can size it, and the same `pg` pool semantics
  * apply as if we had written the SQL by hand.
  */
-
+ 
 export interface DbOptions {
   connectionString?: string
   /** Log every emitted SQL statement. On in dev so the cost of each query is visible. */
