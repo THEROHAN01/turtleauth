@@ -1,20 +1,31 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './auth-service.js'
-import { InMemoryUserStore } from './user-store.js'
-import { InMemorySessionStore } from './session-store.js'
+import { PostgresUserStore } from './user-store.js'
+import { PostgresSessionStore } from './session-store.js'
 import { Argon2Hasher } from '../lib/hashing/argon2-hasher.js'
 import { asSessionId, type User } from '../core/types.js'
+import { createTestDb, truncateAll, type TestDb } from '../test/db.js'
 
 const hasher = new Argon2Hasher({ memoryCost: 8192, timeCost: 1, parallelism: 1 })
 
-let store: InMemoryUserStore
-let sessions: InMemorySessionStore
+let db: TestDb
+let store: PostgresUserStore
+let sessions: PostgresSessionStore
 let auth: AuthService
 let user: User
 
+beforeAll(async () => {
+  db = await createTestDb()
+  store = new PostgresUserStore(db.prisma)
+  sessions = new PostgresSessionStore(db.prisma)
+})
+
+afterAll(async () => {
+  await db.cleanup()
+})
+
 async function setup(policy: SessionPolicy = DEFAULT_SESSION_POLICY) {
-  store = new InMemoryUserStore()
-  sessions = new InMemorySessionStore()
+  await truncateAll(db.prisma)
   auth = new AuthService(store, hasher, sessions, policy)
   user = await auth.register('rohan@kpoint.com', 'correct horse battery staple')
 }
@@ -22,9 +33,9 @@ async function setup(policy: SessionPolicy = DEFAULT_SESSION_POLICY) {
 beforeEach(() => setup())
 
 describe('createSession', () => {
-  it('generates an unguessable id, not a sequential or structured one', () => {
-    const a = auth.createSession(user.id)
-    const b = auth.createSession(user.id)
+  it('generates an unguessable id, not a sequential or structured one', async () => {
+    const a = await auth.createSession(user.id)
+    const b = await auth.createSession(user.id)
 
     expect(a.id).not.toBe(b.id)
     // 32 random bytes in base64url ≈ 43 chars. The point is high entropy, not the
@@ -34,17 +45,17 @@ describe('createSession', () => {
     expect(a.id).toMatch(/^[A-Za-z0-9_-]+$/)
   })
 
-  it('sets the absolute deadline from policy', () => {
+  it('sets the absolute deadline from policy', async () => {
     const before = Date.now()
-    const session = auth.createSession(user.id)
+    const session = await auth.createSession(user.id)
     const expected = before + DEFAULT_SESSION_POLICY.absoluteLifetimeMs
 
     // Within a second of expected — allows for execution time.
     expect(Math.abs(session.expiresAt.getTime() - expected)).toBeLessThan(1000)
   })
 
-  it('records context for audit but never as an auth decision', () => {
-    const session = auth.createSession(user.id, {
+  it('records context for audit but never as an auth decision', async () => {
+    const session = await auth.createSession(user.id, {
       ip: '203.0.113.7',
       userAgent: 'Mozilla/5.0',
     })
@@ -52,8 +63,8 @@ describe('createSession', () => {
     expect(session.userAgent).toBe('Mozilla/5.0')
   })
 
-  it('defaults context to null when not supplied', () => {
-    const session = auth.createSession(user.id)
+  it('defaults context to null when not supplied', async () => {
+    const session = await auth.createSession(user.id)
     expect(session.ip).toBeNull()
     expect(session.userAgent).toBeNull()
   })
@@ -100,95 +111,95 @@ describe('login', () => {
 })
 
 describe('validateSession', () => {
-  it('accepts a live session and returns its user', () => {
-    const session = auth.createSession(user.id)
-    const result = auth.validateSession(session.id)
+  it('accepts a live session and returns its user', async () => {
+    const session = await auth.createSession(user.id)
+    const result = await auth.validateSession(session.id)
     expect(result.user.id).toBe(user.id)
   })
 
-  it('rejects an id that never existed', () => {
-    expect(() => auth.validateSession(asSessionId('totally-made-up'))).toThrow()
+  it('rejects an id that never existed', async () => {
+    await expect(auth.validateSession(asSessionId('totally-made-up'))).rejects.toThrow()
   })
 
-  it('gives the same error for a forged id as for an expired one', () => {
-    const session = auth.createSession(user.id)
+  it('gives the same error for a forged id as for an expired one', async () => {
+    const session = await auth.createSession(user.id)
     const past = new Date(Date.now() + DEFAULT_SESSION_POLICY.absoluteLifetimeMs + 1)
 
-    const forged = (() => {
-      try { auth.validateSession(asSessionId('forged')) } catch (e) { return e as any }
-    })()
-    const expired = (() => {
-      try { auth.validateSession(session.id, past) } catch (e) { return e as any }
-    })()
+    const forged = await auth.validateSession(asSessionId('forged')).catch((e) => e as any)
+    const expired = await auth.validateSession(session.id, past).catch((e) => e as any)
 
     // Different internal codes are fine; what the CLIENT sees must be identical.
     expect(forged.publicMessage).toBe(expired.publicMessage)
     expect(forged.status).toBe(expired.status)
   })
 
-  it('enforces the ABSOLUTE deadline even on a constantly-active session', () => {
-    const session = auth.createSession(user.id)
+  it('enforces the ABSOLUTE deadline even on a constantly-active session', async () => {
+    const session = await auth.createSession(user.id)
     // Just past the absolute cap. lastSeenAt is irrelevant here — that is the point.
     const past = new Date(session.expiresAt.getTime() + 1)
-    expect(() => auth.validateSession(session.id, past)).toThrow()
+    await expect(auth.validateSession(session.id, past)).rejects.toThrow()
   })
 
-  it('enforces the IDLE timeout well before the absolute deadline', () => {
-    const session = auth.createSession(user.id)
+  it('enforces the IDLE timeout well before the absolute deadline', async () => {
+    const session = await auth.createSession(user.id)
     const idle = new Date(Date.now() + DEFAULT_SESSION_POLICY.idleTimeoutMs + 1000)
 
     // Still far inside the 7-day absolute window...
     expect(idle.getTime()).toBeLessThan(session.expiresAt.getTime())
     // ...but idle-expired, so rejected.
-    expect(() => auth.validateSession(session.id, idle)).toThrow()
+    await expect(auth.validateSession(session.id, idle)).rejects.toThrow()
   })
 
-  it('deletes an expired session rather than leaving it to rot', () => {
-    const session = auth.createSession(user.id)
-    expect(sessions.size()).toBe(1)
+  it('deletes an expired session rather than leaving it to rot', async () => {
+    const session = await auth.createSession(user.id)
+    expect(await sessions.size()).toBe(1)
 
     const past = new Date(session.expiresAt.getTime() + 1)
-    expect(() => auth.validateSession(session.id, past)).toThrow()
-    expect(sessions.size()).toBe(0)
+    await expect(auth.validateSession(session.id, past)).rejects.toThrow()
+    expect(await sessions.size()).toBe(0)
   })
 
-  it('slides lastSeenAt once the staleness threshold is crossed', () => {
-    const session = auth.createSession(user.id)
+  it('slides lastSeenAt once the staleness threshold is crossed', async () => {
+    const session = await auth.createSession(user.id)
     const later = new Date(Date.now() + DEFAULT_SESSION_POLICY.slideThresholdMs + 1000)
 
-    const result = auth.validateSession(session.id, later)
+    const result = await auth.validateSession(session.id, later)
     expect(result.session.lastSeenAt.getTime()).toBe(later.getTime())
     // Persisted, not just returned.
-    expect(sessions.findById(session.id)!.lastSeenAt.getTime()).toBe(later.getTime())
+    const stored = await sessions.findById(session.id)
+    expect(stored!.lastSeenAt.getTime()).toBe(later.getTime())
   })
 
-  it('does NOT write on every request — below threshold it leaves the record alone', () => {
-    const session = auth.createSession(user.id)
-    const original = sessions.findById(session.id)!.lastSeenAt.getTime()
+  it('does NOT write on every request — below threshold it leaves the record alone', async () => {
+    const session = await auth.createSession(user.id)
+    const before = await sessions.findById(session.id)
+    const original = before!.lastSeenAt.getTime()
 
     // 1 second later, under the 60s threshold.
-    auth.validateSession(session.id, new Date(Date.now() + 1000))
+    await auth.validateSession(session.id, new Date(Date.now() + 1000))
 
-    expect(sessions.findById(session.id)!.lastSeenAt.getTime()).toBe(original)
+    const after = await sessions.findById(session.id)
+    expect(after!.lastSeenAt.getTime()).toBe(original)
   })
 
-  it('sliding the idle window does NOT extend the absolute deadline', () => {
-    const session = auth.createSession(user.id)
+  it('sliding the idle window does NOT extend the absolute deadline', async () => {
+    const session = await auth.createSession(user.id)
     const originalExpiry = session.expiresAt.getTime()
 
     const later = new Date(Date.now() + DEFAULT_SESSION_POLICY.slideThresholdMs + 1000)
-    const result = auth.validateSession(session.id, later)
+    const result = await auth.validateSession(session.id, later)
 
     // The absolute cap is absolute: activity refreshes idle, never the hard deadline.
     expect(result.session.expiresAt.getTime()).toBe(originalExpiry)
   })
 
-  it('rejects a session whose user has been deleted', () => {
-    const session = auth.createSession(user.id)
-    // Simulate the user row disappearing under a live session.
-    const emptyStore = new InMemoryUserStore()
-    const orphaned = new AuthService(emptyStore, hasher, sessions)
-    expect(() => orphaned.validateSession(session.id)).toThrow()
+  it('rejects a session whose user has been deleted', async () => {
+    const session = await auth.createSession(user.id)
+    // Simulate the user row disappearing under a live session. ON DELETE CASCADE
+    // removes the session too, which is itself the correct behaviour — either way the
+    // session must not validate.
+    await db.prisma.user.delete({ where: { id: user.id } })
+    await expect(auth.validateSession(session.id)).rejects.toThrow()
   })
 })
 
@@ -198,51 +209,51 @@ describe('logout', () => {
       'rohan@kpoint.com',
       'correct horse battery staple',
     )
-    expect(() => auth.validateSession(session.id)).not.toThrow()
+    await expect(auth.validateSession(session.id)).resolves.toBeDefined()
 
-    auth.logout(session.id)
-    expect(() => auth.validateSession(session.id)).toThrow()
+    await auth.logout(session.id)
+    await expect(auth.validateSession(session.id)).rejects.toThrow()
   })
 
-  it('is idempotent — logging out twice is not an error', () => {
-    const session = auth.createSession(user.id)
-    auth.logout(session.id)
-    expect(() => auth.logout(session.id)).not.toThrow()
+  it('is idempotent — logging out twice is not an error', async () => {
+    const session = await auth.createSession(user.id)
+    await auth.logout(session.id)
+    await expect(auth.logout(session.id)).resolves.toBeUndefined()
   })
 
-  it('only ends the session it was given, not the user other devices', () => {
-    const phone = auth.createSession(user.id)
-    const laptop = auth.createSession(user.id)
+  it('only ends the session it was given, not the user other devices', async () => {
+    const phone = await auth.createSession(user.id)
+    const laptop = await auth.createSession(user.id)
 
-    auth.logout(phone.id)
+    await auth.logout(phone.id)
 
-    expect(() => auth.validateSession(phone.id)).toThrow()
-    expect(() => auth.validateSession(laptop.id)).not.toThrow()
+    await expect(auth.validateSession(phone.id)).rejects.toThrow()
+    await expect(auth.validateSession(laptop.id)).resolves.toBeDefined()
   })
 })
 
 describe('logoutAll', () => {
-  it('ends every session for the user and reports how many', () => {
-    auth.createSession(user.id)
-    auth.createSession(user.id)
-    auth.createSession(user.id)
+  it('ends every session for the user and reports how many', async () => {
+    await auth.createSession(user.id)
+    await auth.createSession(user.id)
+    await auth.createSession(user.id)
 
-    expect(auth.logoutAll(user.id)).toBe(3)
-    expect(sessions.size()).toBe(0)
+    expect(await auth.logoutAll(user.id)).toBe(3)
+    expect(await sessions.size()).toBe(0)
   })
 
   it('leaves other users signed in', async () => {
     const other = await auth.register('other@kpoint.com', 'another password entirely')
-    const mine = auth.createSession(user.id)
-    const theirs = auth.createSession(other.id)
+    const mine = await auth.createSession(user.id)
+    const theirs = await auth.createSession(other.id)
 
-    auth.logoutAll(user.id)
+    await auth.logoutAll(user.id)
 
-    expect(() => auth.validateSession(mine.id)).toThrow()
-    expect(() => auth.validateSession(theirs.id)).not.toThrow()
+    await expect(auth.validateSession(mine.id)).rejects.toThrow()
+    await expect(auth.validateSession(theirs.id)).resolves.toBeDefined()
   })
 
-  it('returns 0 for a user with no sessions', () => {
-    expect(auth.logoutAll(user.id)).toBe(0)
+  it('returns 0 for a user with no sessions', async () => {
+    expect(await auth.logoutAll(user.id)).toBe(0)
   })
 })

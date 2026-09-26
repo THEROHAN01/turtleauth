@@ -2,10 +2,12 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import cookie from '@fastify/cookie'
 import { config } from './config.js'
 import { Argon2Hasher } from './lib/hashing/argon2-hasher.js'
-import { InMemoryUserStore } from './services/user-store.js'
-import { InMemorySessionStore } from './services/session-store.js'
+import { PostgresUserStore } from './services/user-store.js'
+import { PostgresSessionStore } from './services/session-store.js'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './services/auth-service.js'
 import { authErrorHandler, registerAuthRoutes } from './routes/auth-routes.js'
+import { createPrismaClient } from './db/client.js'
+import type { PrismaClient } from '@prisma/client'
 
 /**
  * Wiring only. Kept separate from server.ts so tests can build an app and call it via
@@ -19,6 +21,8 @@ export interface BuildAppOptions {
   /** false for local dev over plain http; must be true in production. */
   secureCookies?: boolean
   logger?: boolean
+  /** Inject a client so tests can point at an isolated schema. */
+  prisma?: PrismaClient
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -32,6 +36,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     // Plain http is only acceptable locally. Anything else gets Secure cookies.
     secureCookies = config.NODE_ENV === 'production',
     logger = config.NODE_ENV !== 'test',
+    prisma = createPrismaClient(),
   } = options
 
   const app = Fastify({
@@ -46,13 +51,30 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   app.register(cookie)
 
-  const userStore = new InMemoryUserStore()
-  const sessionStore = new InMemorySessionStore()
+  const userStore = new PostgresUserStore(prisma)
+  const sessionStore = new PostgresSessionStore(prisma)
   const auth = new AuthService(userStore, hasher, sessionStore, sessionPolicy)
 
   app.setErrorHandler(authErrorHandler)
 
-  app.get('/health', async () => ({ status: 'ok' }))
+  /**
+   * Health includes a real database round trip. A process that is up but cannot reach
+   * Postgres is not healthy — it will 500 every authenticated request — and a load
+   * balancer needs to know that rather than keep routing traffic to it.
+   */
+  app.get('/health', async (_request, reply) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`
+      return { status: 'ok', database: 'ok' }
+    } catch {
+      return reply.code(503).send({ status: 'degraded', database: 'unreachable' })
+    }
+  })
+
+  // Release the connection pool when the server closes.
+  app.addHook('onClose', async () => {
+    await prisma.$disconnect()
+  })
 
   app.register(async (instance) => {
     await registerAuthRoutes(instance, {

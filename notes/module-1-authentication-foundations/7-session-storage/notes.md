@@ -317,3 +317,93 @@ The reaper is the one with no in-memory analogue and no reminder: expired sessio
 already rejected by `validateSession`, so a missing reaper produces **no functional bug**
 — just a table that grows forever until the index degrades. Silent, slow, and only
 noticed under load.
+
+---
+
+## What Postgres added (v0.1.1)
+
+The in-memory tier is gone. `src/services/session-store.ts` is now `PostgresSessionStore`.
+
+### Verified, not assumed
+
+```
+  register  ->  cookie issued by process A
+  kill -9 A
+  start process B  (new PID, empty memory)
+  same cookie  ->  200, same user id
+```
+
+On `v0.1.0` that cookie returned 401 and the account itself was gone. This is the entire
+point of the increment, and it is the one thing worth testing by hand rather than trusting
+a unit test.
+
+### The hand-built index, replaced
+
+```
+  in-memory:  byUser: Map<UserId, Set<SessionId>>   maintained by hand on every
+                                                     create and delete, or it drifts
+  Postgres:   @@index([userId])                      maintained by the database
+```
+
+Both `logoutAll` implementations are one operation. The difference is who guarantees the
+index is correct. Building it by hand first is what makes `CREATE INDEX` stop being
+magic — it is that Set, kept in sync for you.
+
+### `update` vs `updateMany` — a durability-only problem
+
+```ts
+// update() THROWS when the row is gone
+await prisma.session.updateMany({ where: { id }, data: { lastSeenAt } })
+```
+
+A session can legitimately vanish between `validateSession` reading it and the slide
+writing it back — a logout in another tab, or the reaper once it exists. `updateMany`
+affects zero rows and returns quietly.
+
+This is the in-memory `if (!sessions.has(id)) return` guard, restated in SQL. In memory it
+was defensive; with a shared database and concurrent instances it is load-bearing.
+
+### Two clients, one connection, different schemas
+
+Prisma's **generated client hardcodes the schema name from `schema.prisma`** into its SQL.
+It ignores the connection's `search_path`. Raw queries (`$queryRawUnsafe`) honour it.
+
+```
+  connection search_path = "test_abc",public
+
+  prisma.user.create()          -> writes to public      (baked in)
+  $queryRawUnsafe('...users')   -> reads  test_abc       (search_path)
+```
+
+Setup and assertions read one schema while the code under test writes another. The visible
+symptom was a brand-new empty schema reporting `EMAIL_ALREADY_REGISTERED` — which reads
+like a logic bug and is actually a targeting bug.
+
+Worth knowing beyond tests: any multi-tenant-by-schema design on Prisma hits this. Schema
+isolation needs a client per schema, not a connection setting.
+
+### Constraints move from accident to guarantee
+
+```
+  in-memory:  if (emailIndex.has(email)) return null   atomic by ACCIDENT
+                                                        (single-threaded JS)
+  Postgres:   UNIQUE INDEX + catch P2002                atomic by GUARANTEE
+```
+
+Check-then-insert has a real race against a database: two concurrent registrations both
+SELECT "not found", then both INSERT. Catching the constraint violation is not error
+handling — it is **how the application learns the database refused**.
+
+General principle: a check the application performs is an optimisation; only the database
+can be the arbiter.
+
+### What Postgres did NOT give us
+
+Expired rows still accumulate. `validateSession` deletes any it encounters, so the only
+rows that linger are those nobody touches again — which is most of them.
+
+No test fails. No user sees an error. The table grows until the index degrades, months
+later, under load. The in-memory version got cleanup for free from process restarts;
+durability removes that accident and makes the requirement explicit for the first time.
+
+→ [issue #1](https://github.com/THEROHAN01/turtleauth/issues/1), deliberately deferred.

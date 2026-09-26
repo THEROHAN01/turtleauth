@@ -1,79 +1,130 @@
-import { randomUUID } from 'node:crypto'
+import { Prisma, type PrismaClient } from '@prisma/client'
 import type { User, Credential, UserId } from '../core/types.js'
 import { asUserId, asCredentialId } from '../core/types.js'
 
 /**
- * In-memory user + credential storage.
+ * User and credential storage, backed by Postgres.
  *
- * Deliberately NOT behind an interface yet. We have exactly one implementation and no
- * evidence for what a second one needs. When Postgres arrives we will extract the
- * interface from two real implementations instead of guessing at one.
+ * Replaces the in-memory Map implementation from v0.1.0. That version is gone rather
+ * than kept alongside this one: two implementations drift, and a suite that passes
+ * against a Map never proved the SQL path worked.
  *
- * Users and credentials are stored separately, mirroring the domain model: one identity
- * may hold many credentials (password now; passkey and OAuth later).
+ * Cost of that choice: tests now need a running database and are slower. Accepted so
+ * that what is tested is what ships.
  */
-export class InMemoryUserStore {
-  private readonly users = new Map<UserId, User>()
-  /** Secondary index: normalised email -> user id. Postgres will do this with UNIQUE. */
-  private readonly emailIndex = new Map<string, UserId>()
-  private readonly credentials = new Map<UserId, Credential>()
+
+/** Postgres unique-constraint violation. */
+const UNIQUE_VIOLATION = 'P2002'
+
+/** Prisma row -> domain object. Keeps Prisma's generated types out of the service layer. */
+function toUser(row: {
+  id: string
+  email: string
+  emailVerifiedAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+}): User {
+  return {
+    id: asUserId(row.id),
+    email: row.email,
+    emailVerifiedAt: row.emailVerifiedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function toCredential(row: {
+  id: string
+  userId: string
+  type: string
+  secret: string
+  createdAt: Date
+  updatedAt: Date
+}): Credential {
+  return {
+    id: asCredentialId(row.id),
+    userId: asUserId(row.userId),
+    type: 'password',
+    secret: row.secret,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export class PostgresUserStore {
+  constructor(private readonly prisma: PrismaClient) {}
 
   /**
    * Insert a user and their password credential together.
    *
-   * Returns null if the email is already taken. Note this check and the insert happen
-   * in one synchronous block, so there is no interleaving — single-threaded JS gives us
-   * atomicity for free here. Postgres will NOT, which is why the real table needs a
-   * UNIQUE constraint rather than a check-then-insert. (Module 6.)
+   * Returns null when the email is taken — detected by CATCHING the unique-constraint
+   * violation rather than by checking first.
+   *
+   * Why: a check-then-insert has a race the Map version did not. Two concurrent
+   * registrations both SELECT "not found", then both INSERT:
+   *
+   *     t0  A: SELECT ... WHERE email='x'  -> none
+   *     t1  B: SELECT ... WHERE email='x'  -> none
+   *     t2  A: INSERT                      -> ok
+   *     t3  B: INSERT                      -> ok      two accounts, one email
+   *
+   * Single-threaded JS made that impossible in memory, by accident. Postgres will
+   * happily interleave. The UNIQUE index is the arbiter; catching P2002 is how the
+   * application learns the database refused.
+   *
+   * Both rows are written in ONE transaction: a user without their credential would be
+   * an account nobody can ever log into.
    */
-  createUserWithPassword(normalisedEmail: string, passwordHash: string): User | null {
-    if (this.emailIndex.has(normalisedEmail)) return null
-
-    const now = new Date()
-    const id = asUserId(randomUUID())
-
-    const user: User = {
-      id,
-      email: normalisedEmail,
-      emailVerifiedAt: null,
-      createdAt: now,
-      updatedAt: now,
+  async createUserWithPassword(
+    normalisedEmail: string,
+    passwordHash: string,
+  ): Promise<User | null> {
+    try {
+      const row = await this.prisma.user.create({
+        data: {
+          email: normalisedEmail,
+          credentials: {
+            create: { type: 'password', secret: passwordHash },
+          },
+        },
+      })
+      return toUser(row)
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === UNIQUE_VIOLATION
+      ) {
+        return null
+      }
+      throw error
     }
-
-    const credential: Credential = {
-      id: asCredentialId(randomUUID()),
-      userId: id,
-      type: 'password',
-      secret: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    }
-
-    this.users.set(id, user)
-    this.emailIndex.set(normalisedEmail, id)
-    this.credentials.set(id, credential)
-
-    return user
   }
 
-  findUserByEmail(normalisedEmail: string): User | undefined {
-    const id = this.emailIndex.get(normalisedEmail)
-    return id ? this.users.get(id) : undefined
+  async findUserByEmail(normalisedEmail: string): Promise<User | undefined> {
+    // CITEXT means this matches case-insensitively at the database, independently of
+    // whether the caller normalised.
+    const row = await this.prisma.user.findUnique({ where: { email: normalisedEmail } })
+    return row ? toUser(row) : undefined
   }
 
-  findUserById(id: UserId): User | undefined {
-    return this.users.get(id)
+  async findUserById(id: UserId): Promise<User | undefined> {
+    const row = await this.prisma.user.findUnique({ where: { id } })
+    return row ? toUser(row) : undefined
   }
 
-  findCredentialByEmail(normalisedEmail: string): Credential | undefined {
-    const id = this.emailIndex.get(normalisedEmail)
-    return id ? this.credentials.get(id) : undefined
+  async findCredentialByEmail(normalisedEmail: string): Promise<Credential | undefined> {
+    // One query with a join, not two round trips. Every authenticated login pays this.
+    const row = await this.prisma.credential.findFirst({
+      where: { type: 'password', user: { email: normalisedEmail } },
+    })
+    return row ? toCredential(row) : undefined
   }
 
   /** Replace a stored hash — used by transparent rehash-on-login. */
-  updatePasswordHash(userId: UserId, newHash: string): void {
-    const existing = this.credentials.get(userId)
-    if (!existing) return
-    this.credentials.set(userId, { ...existing, secret: newHash, updatedAt: new Date() })
+  async updatePasswordHash(userId: UserId, newHash: string): Promise<void> {
+    await this.prisma.credential.update({
+      where: { userId_type: { userId, type: 'password' } },
+      data: { secret: newHash },
+    })
   }
 }

@@ -14,6 +14,12 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
 
   /**
+   * Postgres connection string. No default: a missing DATABASE_URL must stop the
+   * process, not silently fall back to some other database.
+   */
+  DATABASE_URL: z.string().url(),
+
+  /**
    * Argon2id work factor.
    *
    * MEASURED on this dev machine (node 22, x64) with `pnpm bench:hash`:

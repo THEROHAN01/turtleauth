@@ -98,7 +98,7 @@ export async function registerAuthRoutes(
      * exists (Module 5), a session here means "chose this password", not "owns this
      * inbox" — fine for sign-in, not enough for anything that trusts the address.
      */
-    const session = auth.createSession(user.id, context(request))
+    const session = await auth.createSession(user.id, context(request))
     setSessionCookie(reply, session.id)
 
     return reply.code(201).send({ user: publicUser(user) })
@@ -141,7 +141,7 @@ export async function registerAuthRoutes(
     if (!sessionId) throw AuthError.notAuthenticated()
 
     // Expiry is checked in here — SERVER-side. The cookie's Max-Age is only a hint.
-    const { user, session } = auth.validateSession(asSessionId(sessionId))
+    const { user, session } = await auth.validateSession(asSessionId(sessionId))
 
     return reply.send({
       user: publicUser(user),
@@ -160,7 +160,7 @@ export async function registerAuthRoutes(
      * Delete server-side AND clear the cookie. Clearing only the cookie would leave a
      * live session that any copy of the value still opens.
      */
-    if (sessionId) auth.logout(asSessionId(sessionId))
+    if (sessionId) await auth.logout(asSessionId(sessionId))
     reply.clearCookie(cookieName, clearSessionCookieOptions(secureCookies))
 
     /**
@@ -175,8 +175,8 @@ export async function registerAuthRoutes(
     const sessionId = request.cookies[cookieName]
     if (!sessionId) throw AuthError.notAuthenticated()
 
-    const { user } = auth.validateSession(asSessionId(sessionId))
-    const count = auth.logoutAll(user.id)
+    const { user } = await auth.validateSession(asSessionId(sessionId))
+    const count = await auth.logoutAll(user.id)
     reply.clearCookie(cookieName, clearSessionCookieOptions(secureCookies))
 
     return reply.send({ sessionsEnded: count })

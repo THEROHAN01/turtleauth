@@ -1,7 +1,6 @@
 # Sprint 1, increment 2 — Postgres Persistence
 
-> **Status:** 🟢 decided — see §10. Building now.
-> Target: `v0.1.1`, branch `sprint-1/postgres-store`.
+> **Status:** ✅ shipped as `v0.1.1`. See §11 for what building it actually taught.
 
 ---
 
@@ -291,3 +290,58 @@ stop them drifting — machinery that is itself a maintenance cost.
 
 Mitigation for the friction: container lifecycle is scripted (`pnpm db:up`), and a stopped
 Docker produces a clear message rather than a confusing cascade of failures.
+
+
+---
+
+## 11. What building it taught
+
+### The layering held
+
+`AuthService` gained no SQL and `routes/` gained no logic — only `await`. The §2
+prediction was right: the boundary was real, not decorative.
+
+The one unavoidable ripple was async. Store methods became `Promise`-returning, which
+propagated to `validateSession`, `logout`, `logoutAll`, and every route calling them.
+Mechanical, as predicted.
+
+### Prisma 7 moved the goalposts
+
+Two breaking changes from what the roadmap assumes:
+
+| | Prisma 6 and earlier | Prisma 7 |
+|---|---|---|
+| Connection URL | `url` in `schema.prisma` | `prisma.config.ts` + driver adapter |
+| Runtime | bundled query engine | `@prisma/adapter-pg` over a `pg` pool |
+
+Net effect is better: the schema file is environment-agnostic and cannot carry a
+connection string into version control, and the pool is ours to size.
+
+Also: npm's `latest` tag for `prisma` currently points at an `8.0.0-rc`, so a plain
+`pnpm add prisma` resolved the CLI to a prerelease while the client stayed on 7. Pinned
+both to `7.10.0`. Worth checking `dist-tags` rather than trusting `latest` for anything
+load-bearing.
+
+### The schema-isolation failure
+
+The plan in §8 was a schema per test file. It does not work, and the reason is worth
+keeping:
+
+**Prisma's generated client bakes `schema.prisma`'s schema name into its SQL and ignores
+`search_path`. Raw queries honour it.** So setup wrote to one schema and the code under
+test wrote to another, and a brand-new empty schema reported `EMAIL_ALREADY_REGISTERED`.
+
+Settled on one shared schema with `fileParallelism: false`. Cost is wall-clock
+(~300ms → ~7s), not correctness.
+
+Generalises beyond tests: schema-per-tenant on Prisma needs a client per schema.
+
+### Debugging note
+
+Several minutes went into chasing `search_path` before probing what Prisma actually
+emitted. `SHOW search_path` proved the connection was configured correctly, which is what
+redirected attention to the client rather than the pool.
+
+A stale row in `public.users`, left by the first broken run, then masked the fix — the
+suite kept failing after the real problem was solved. **When a fix does not take, check
+whether earlier failures left state behind** before assuming the fix is wrong.

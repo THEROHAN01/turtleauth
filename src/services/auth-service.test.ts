@@ -1,21 +1,32 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest'
 import { AuthService } from './auth-service.js'
-import { InMemoryUserStore } from './user-store.js'
-import { InMemorySessionStore } from './session-store.js'
+import { PostgresUserStore } from './user-store.js'
+import { PostgresSessionStore } from './session-store.js'
 import { Argon2Hasher } from '../lib/hashing/argon2-hasher.js'
 import { AuthError } from '../core/errors.js'
+import { createTestDb, truncateAll, type TestDb } from '../test/db.js'
 
 // Weak params so the suite stays fast. Real cost comes from config in production.
 const hasher = new Argon2Hasher({ memoryCost: 8192, timeCost: 1, parallelism: 1 })
 
-let store: InMemoryUserStore
-let sessionStore: InMemorySessionStore
+let db: TestDb
+let store: PostgresUserStore
+let sessionStore: PostgresSessionStore
 let auth: AuthService
 
-beforeEach(() => {
-  store = new InMemoryUserStore()
-  sessionStore = new InMemorySessionStore()
+beforeAll(async () => {
+  db = await createTestDb()
+  store = new PostgresUserStore(db.prisma)
+  sessionStore = new PostgresSessionStore(db.prisma)
   auth = new AuthService(store, hasher, sessionStore)
+})
+
+afterAll(async () => {
+  await db.cleanup()
+})
+
+beforeEach(async () => {
+  await truncateAll(db.prisma)
 })
 
 describe('register', () => {
@@ -33,7 +44,7 @@ describe('register', () => {
   it('stores a hash, never the plaintext password', async () => {
     await auth.register('rohan@kpoint.com', 'hunter2')
 
-    const cred = store.findCredentialByEmail('rohan@kpoint.com')
+    const cred = await store.findCredentialByEmail('rohan@kpoint.com')
     expect(cred).toBeDefined()
     expect(cred!.secret).not.toContain('hunter2')
     expect(cred!.secret).toMatch(/^\$argon2id\$/)
@@ -43,7 +54,7 @@ describe('register', () => {
     await auth.register('Rohan@KPoint.com', 'hunter2')
 
     // Stored lowercased...
-    const user = store.findUserByEmail('rohan@kpoint.com')
+    const user = await store.findUserByEmail('rohan@kpoint.com')
     expect(user).toBeDefined()
 
     // ...and a differently-cased re-registration is a duplicate.
@@ -52,7 +63,7 @@ describe('register', () => {
 
   it('trims surrounding whitespace from email', async () => {
     await auth.register('  rohan@kpoint.com  ', 'hunter2')
-    expect(store.findUserByEmail('rohan@kpoint.com')).toBeDefined()
+    expect(await store.findUserByEmail('rohan@kpoint.com')).toBeDefined()
   })
 
   it('rejects a duplicate registration', async () => {

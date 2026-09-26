@@ -3,8 +3,8 @@ import type { AuthenticatedSession, Session, SessionId, User, UserId } from '../
 import { asSessionId } from '../core/types.js'
 import { AuthError } from '../core/errors.js'
 import type { Hasher } from '../lib/hashing/hasher.js'
-import type { InMemoryUserStore } from './user-store.js'
-import type { InMemorySessionStore } from './session-store.js'
+import type { PostgresUserStore } from './user-store.js'
+import type { PostgresSessionStore } from './session-store.js'
 
 /**
  * AuthService — the actual authentication logic.
@@ -47,9 +47,9 @@ const SESSION_ID_BYTES = 32
 export class AuthService {
 
   constructor(
-    private readonly store: InMemoryUserStore,
+    private readonly store: PostgresUserStore,
     private readonly hasher: Hasher,
-    private readonly sessions: InMemorySessionStore,
+    private readonly sessions: PostgresSessionStore,
     private readonly policy: SessionPolicy = DEFAULT_SESSION_POLICY,
   ) {}
 
@@ -79,7 +79,7 @@ export class AuthService {
     const normalisedEmail = this.normaliseEmail(email)
 
     const passwordHash = await this.hasher.hash(password)
-    const user = this.store.createUserWithPassword(normalisedEmail, passwordHash)
+    const user = await this.store.createUserWithPassword(normalisedEmail, passwordHash)
 
     if (user === null ){
       throw AuthError.emailAlreadyRegistered()
@@ -92,7 +92,7 @@ export class AuthService {
   async verifyPassword(email: string, password: string): Promise<boolean> {
 
     const normalisedEmail = this.normaliseEmail(email)
-    const credential = this.store.findCredentialByEmail(normalisedEmail)
+    const credential = await this.store.findCredentialByEmail(normalisedEmail)
 
     if(!credential) {
       await this.hasher.verify(password, await this.getDummyHash())
@@ -113,10 +113,10 @@ export class AuthService {
    * verified user but no password, and must reuse this exact path rather than
    * reimplementing session creation.
    */
-  createSession(
+  async createSession(
     userId: UserId,
     context: { ip?: string | null; userAgent?: string | null } = {},
-  ): Session {
+  ): Promise<Session> {
     const now = new Date()
 
     const session: Session = {
@@ -132,7 +132,7 @@ export class AuthService {
       userAgent: context.userAgent ?? null,
     }
 
-    this.sessions.create(session)
+    await this.sessions.create(session)
     return session
   }
 
@@ -154,10 +154,10 @@ export class AuthService {
 
     // verifyPassword already proved the credential exists, so a missing user here is a
     // genuine inconsistency, not a failed login.
-    const user = this.store.findUserByEmail(normalisedEmail)
+    const user = await this.store.findUserByEmail(normalisedEmail)
     if (!user) throw AuthError.invalidCredentials('credential without user')
 
-    const session = this.createSession(user.id, context)
+    const session = await this.createSession(user.id, context)
     return { session, user }
   }
 
@@ -174,27 +174,30 @@ export class AuthService {
    * Expiry is checked HERE, server-side. The cookie's Max-Age is a hint the user can
    * edit — and an attacker holding a stolen cookie certainly will.
    */
-  validateSession(sessionId: SessionId, now: Date = new Date()): AuthenticatedSession {
-    const session = this.sessions.findById(sessionId)
+  async validateSession(
+    sessionId: SessionId,
+    now: Date = new Date(),
+  ): Promise<AuthenticatedSession> {
+    const session = await this.sessions.findById(sessionId)
     // Unknown id and expired session raise the same error: a caller cannot learn
     // whether an id ever existed.
     if (!session) throw AuthError.sessionInvalid('no such session')
 
     if (now >= session.expiresAt) {
-      this.sessions.delete(sessionId)
+      await this.sessions.delete(sessionId)
       throw AuthError.sessionExpired()
     }
 
     const idleDeadline = session.lastSeenAt.getTime() + this.policy.idleTimeoutMs
     if (now.getTime() >= idleDeadline) {
-      this.sessions.delete(sessionId)
+      await this.sessions.delete(sessionId)
       throw AuthError.sessionExpired()
     }
 
-    const user = this.store.findUserById(session.userId)
+    const user = await this.store.findUserById(session.userId)
     if (!user) {
       // User deleted while a session lived. Clean up rather than serve a ghost.
-      this.sessions.delete(sessionId)
+      await this.sessions.delete(sessionId)
       throw AuthError.sessionInvalid('session references a missing user')
     }
 
@@ -204,7 +207,7 @@ export class AuthService {
     const staleness = now.getTime() - session.lastSeenAt.getTime()
     if (staleness >= this.policy.slideThresholdMs) {
       const slid: Session = { ...session, lastSeenAt: now }
-      this.sessions.update(slid)
+      await this.sessions.update(slid)
       return { session: slid, user }
     }
 
@@ -218,12 +221,12 @@ export class AuthService {
    * next request. Module 2 trades it away for statelessness and spends the whole module
    * buying pieces of it back.
    */
-  logout(sessionId: SessionId): void {
-    this.sessions.delete(sessionId)
+  async logout(sessionId: SessionId): Promise<void> {
+    await this.sessions.delete(sessionId)
   }
 
   /** End every session for a user — "log out all devices". */
-  logoutAll(userId: UserId): number {
+  async logoutAll(userId: UserId): Promise<number> {
     return this.sessions.deleteAllForUser(userId)
   }
 }
