@@ -20,6 +20,7 @@ Postgres.
 | Tests | 74 passing (`vitest`), run against a real Postgres instance |
 | CI | GitHub Actions — typecheck, build, test on Node 22 and 24 |
 | Endpoints | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/logout-all`, `GET /health` |
+| API docs | Swagger UI at `/docs` (dev/test only — see [§3](#3-getting-started)) |
 
 **Known gaps, tracked deliberately rather than accidentally missed:**
 
@@ -163,6 +164,24 @@ pnpm dev
 
 Server listens on `http://localhost:3000` (configurable via `PORT`).
 
+### Interactive API docs (Swagger UI)
+
+Open **`http://localhost:3000/docs`**. Every endpoint below is listed with its request
+and response shapes; "Try it out" sends real requests to the running server, and since
+the page is served from the same origin, the session cookie set by `/auth/register` or
+`/auth/login` is carried automatically into later calls in that browser tab — register,
+then call `/auth/me` with no extra setup.
+
+The spec (`src/docs/openapi.ts`) is hand-written rather than generated from the Zod
+validation schemas — see the comment at the top of that file for why: generating it from
+the same schema Fastify validates against would make Fastify validate (and reject) bodies
+itself, ahead of the handler, which would break `/auth/login`'s deliberate "always 401,
+never 400" behaviour. Update it by hand when a route's shape changes.
+
+Disabled automatically when `NODE_ENV=production` (an interactive API explorer is a
+reconnaissance tool for whoever finds the URL) — override with `enableDocs: true` in
+`buildApp()` if you ever need it there.
+
 ### Configuration (`.env`)
 
 | Variable | Required | Default | Notes |
@@ -238,6 +257,11 @@ Requires the session cookie. Ends **every** session for that user (all devices).
 ---
 
 ## 5. Manual testing
+
+Easiest path: open `http://localhost:3000/docs` and use "Try it out" — see
+[§3](#3-getting-started). The curl walkthrough below is for scripting the same flow, or
+for anything the browser's cookie jar makes awkward to inspect (like comparing two
+separate "devices" for `logout-all`, below).
 
 With `pnpm dev` running and Postgres up (`pnpm db:up`):
 

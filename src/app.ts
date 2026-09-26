@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import cookie from '@fastify/cookie'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
 import { config } from './config.js'
 import { Argon2Hasher } from './lib/hashing/argon2-hasher.js'
 import { PostgresUserStore } from './services/user-store.js'
@@ -7,6 +9,7 @@ import { PostgresSessionStore } from './services/session-store.js'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './services/auth-service.js'
 import { authErrorHandler, registerAuthRoutes } from './routes/auth-routes.js'
 import { createPrismaClient } from './db/client.js'
+import { openApiDocument } from './docs/openapi.js'
 import type { PrismaClient } from '@prisma/client'
 
 /**
@@ -23,6 +26,12 @@ export interface BuildAppOptions {
   logger?: boolean
   /** Inject a client so tests can point at an isolated schema. */
   prisma?: PrismaClient
+  /**
+   * Serve Swagger UI at /docs. Off by default in production: an interactive API
+   * explorer is a reconnaissance tool handed to whoever finds the URL, and the value it
+   * adds locally — click a request, see the shape — isn't a production concern.
+   */
+  enableDocs?: boolean
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -36,6 +45,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     // Plain http is only acceptable locally. Anything else gets Secure cookies.
     secureCookies = config.NODE_ENV === 'production',
     logger = config.NODE_ENV !== 'test',
+    enableDocs = config.NODE_ENV !== 'production',
   } = options
 
   // Track ownership: only a client THIS call created should be disconnected on close.
@@ -54,6 +64,16 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   })
 
   app.register(cookie)
+
+  /**
+   * Swagger UI at /docs, from a hand-written static spec — see docs/openapi.ts for why
+   * it isn't generated from the route schemas. "Try it out" hits the real endpoints and
+   * carries the session cookie automatically (same-origin, in the same browser tab).
+   */
+  if (enableDocs) {
+    app.register(swagger, { mode: 'static', specification: { document: openApiDocument } })
+    app.register(swaggerUi, { routePrefix: '/docs' })
+  }
 
   const userStore = new PostgresUserStore(prisma)
   const sessionStore = new PostgresSessionStore(prisma)
