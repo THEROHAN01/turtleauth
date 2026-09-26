@@ -36,8 +36,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     // Plain http is only acceptable locally. Anything else gets Secure cookies.
     secureCookies = config.NODE_ENV === 'production',
     logger = config.NODE_ENV !== 'test',
-    prisma = createPrismaClient(),
   } = options
+
+  // Track ownership: only a client THIS call created should be disconnected on close.
+  // An injected client (tests pointing at an isolated schema) may outlive this app.
+  const ownsPrisma = options.prisma === undefined
+  const prisma = options.prisma ?? createPrismaClient()
 
   const app = Fastify({
     logger,
@@ -71,10 +75,14 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     }
   })
 
-  // Release the connection pool when the server closes.
-  app.addHook('onClose', async () => {
-    await prisma.$disconnect()
-  })
+  // Release the connection pool when the server closes — but only a pool THIS call
+  // opened. Disconnecting an injected client would pull it out from under whatever
+  // else still holds a reference to it.
+  if (ownsPrisma) {
+    app.addHook('onClose', async () => {
+      await prisma.$disconnect()
+    })
+  }
 
   app.register(async (instance) => {
     await registerAuthRoutes(instance, {
