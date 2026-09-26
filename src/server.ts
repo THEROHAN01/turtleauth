@@ -29,13 +29,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'))
 
 try {
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
-
-  if (config.NODE_ENV !== 'production') {
-    app.log.warn(
-      'Sessions are IN-MEMORY: a restart logs everyone out, and a second instance ' +
-        'would not see these sessions. Postgres comes at the end of Module 1.',
-    )
-  }
 } catch (err) {
   app.log.error({ err }, 'failed to start')
   process.exit(1)
