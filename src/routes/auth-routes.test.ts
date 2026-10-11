@@ -317,3 +317,18 @@ describe('full lifecycle', () => {
     expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: c2 } })).statusCode).toBe(200)
   })
 })
+
+describe('GET /docs/json', () => {
+  it('documents the cookie name the server actually sets', async () => {
+    const res = await app.inject({ method: 'GET', url: '/docs/json' })
+    const cookieAuth = res.json().components.securitySchemes.cookieAuth
+
+    // app is built with secureCookies:true, so the real cookie is __Host-sid.
+    const sessionCookie = (await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: CREDS,
+    })).cookies[0]
+    expect(cookieAuth.name).toBe(sessionCookie!.name)
+  })
+})

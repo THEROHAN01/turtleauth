@@ -9,8 +9,9 @@ import { PostgresUserStore } from './services/user-store.js'
 import { PostgresSessionStore } from './services/session-store.js'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './services/auth-service.js'
 import { authErrorHandler, registerAuthRoutes } from './routes/auth-routes.js'
+import { sessionCookieName } from './routes/cookie.js'
 import { createPrismaClient } from './db/client.js'
-import { openApiDocument } from './docs/openapi.js'
+import { buildOpenApiDocument } from './docs/openapi.js'
 import type { PrismaClient } from '@prisma/client'
 
 /**
@@ -72,7 +73,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
    * carries the session cookie automatically (same-origin, in the same browser tab).
    */
   if (enableDocs) {
-    app.register(swagger, { mode: 'static', specification: { document: openApiDocument } })
+    app.register(swagger, {
+      mode: 'static',
+      specification: { document: buildOpenApiDocument(sessionCookieName(secureCookies)) },
+    })
     app.register(swaggerUi, { routePrefix: '/docs' })
   }
 
