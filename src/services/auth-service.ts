@@ -12,7 +12,6 @@ import type { PostgresSessionStore } from './session-store.js'
  * KNOWS NOTHING ABOUT HTTP. No request, no response, no cookie, no status code. That is
  * what lets Module 4's Google OAuth callback reuse these same methods, and what lets
  * these tests run without starting a server.
-
  */
 
 /** Session lifetime policy. Both clocks are enforced — see validateSession. */
@@ -45,7 +44,6 @@ export const DEFAULT_SESSION_POLICY: SessionPolicy = {
 const SESSION_ID_BYTES = 32
 
 export class AuthService {
-
   constructor(
     private readonly store: PostgresUserStore,
     private readonly hasher: Hasher,
@@ -74,32 +72,29 @@ export class AuthService {
     return email.trim().toLowerCase()
   }
 
-  
   async register(email: string, password: string): Promise<User> {
     const normalisedEmail = this.normaliseEmail(email)
 
     const passwordHash = await this.hasher.hash(password)
     const user = await this.store.createUserWithPassword(normalisedEmail, passwordHash)
 
-    if (user === null ){
+    if (user === null) {
       throw AuthError.emailAlreadyRegistered()
     }
 
     return user
   }
 
-  
   async verifyPassword(email: string, password: string): Promise<boolean> {
-
     const normalisedEmail = this.normaliseEmail(email)
     const credential = await this.store.findCredentialByEmail(normalisedEmail)
 
-    if(!credential) {
+    if (!credential) {
       await this.hasher.verify(password, await this.getDummyHash())
       return false
-  }
+    }
 
-    return this.hasher.verify(password,credential.secret)
+    return this.hasher.verify(password, credential.secret)
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -230,13 +225,3 @@ export class AuthService {
     return this.sessions.deleteAllForUser(userId)
   }
 }
-
-/**
- * A real Argon2id hash of a random string nobody knows, used ONLY to burn equivalent
- * CPU time when no user exists — so the missing-user path is not measurably faster
- * than the wrong-password path. It will never match any submitted password.
- *
- * Generated once at module load rather than per call, because generating it per call
- * would cost a hash() AND a verify() and skew the timing the other way.
- */
-
