@@ -39,6 +39,7 @@ not just in unit tests.
 ```
 0.1.0   Sprint 1   password auth + in-memory sessions
 0.1.1   Sprint 1   + Postgres persistence          <- same sprint, incremental
+0.1.2   Sprint 1   fixes: rehash-on-login, CI, proxy trust
 0.2.0   Sprint 2   JWT access + refresh tokens
 0.3.0   Sprint 3   attack lab + rate limiting
 0.4.0   Sprint 4   OAuth 2.0 + OIDC

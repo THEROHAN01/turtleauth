@@ -15,7 +15,9 @@ Har document mein ye hoga:
 
 | # | Phase | Document | Status |
 |---|---|---|---|
-| 01 | Module 1 — Authentication Foundations | [01-module-1-design.md](01-module-1-design.md) | 🟡 discussion chal rahi hai |
+| 00 | Conventions — sprints, versions, commits, branches | [00-conventions.md](00-conventions.md) | ✅ ban gaya |
+| 01 | Module 1 — Authentication Foundations | [01-module-1-design.md](01-module-1-design.md) | ✅ ban gaya |
+| 02 | Sprint 1 — Postgres Persistence | [02-postgres-persistence.md](02-postgres-persistence.md) | ✅ ban gaya |
 
 ## Legend
 

@@ -127,3 +127,50 @@ describe('verifyPassword', () => {
     expect(missing).toBeGreaterThan(existing * 0.25)
   })
 })
+
+describe('rehash on login', () => {
+  // A hash made before ARGON2_MEMORY_COST was raised: same algorithm, weaker params.
+  const weakHasher = new Argon2Hasher({ memoryCost: 8192, timeCost: 1, parallelism: 1 })
+  const strongHasher = new Argon2Hasher({ memoryCost: 9216, timeCost: 2, parallelism: 1 })
+  const PASSWORD = 'correct horse battery staple'
+
+  async function storedSecret(): Promise<string> {
+    const credential = await store.findCredentialByEmail('rohan@kpoint.com')
+    return credential!.secret
+  }
+
+  beforeEach(async () => {
+    await store.createUserWithPassword('rohan@kpoint.com', await weakHasher.hash(PASSWORD))
+  })
+
+  it('upgrades a hash made under weaker params on successful login', async () => {
+    const strongAuth = new AuthService(store, strongHasher, sessionStore)
+    const before = await storedSecret()
+
+    await strongAuth.login('rohan@kpoint.com', PASSWORD)
+
+    const after = await storedSecret()
+    expect(after).not.toBe(before)
+    expect(strongHasher.needsRehash(after)).toBe(false)
+    // Still the same password: the upgrade must not lock the user out.
+    await expect(strongAuth.login('rohan@kpoint.com', PASSWORD)).resolves.toBeDefined()
+  })
+
+  it('leaves a hash alone when it already meets policy', async () => {
+    const before = await storedSecret()
+
+    await auth.login('rohan@kpoint.com', PASSWORD)
+
+    expect(await storedSecret()).toBe(before)
+  })
+
+  it('never rehashes on a FAILED login', async () => {
+    const strongAuth = new AuthService(store, strongHasher, sessionStore)
+    const before = await storedSecret()
+
+    await expect(strongAuth.login('rohan@kpoint.com', 'wrong-password'))
+      .rejects.toBeInstanceOf(AuthError)
+
+    expect(await storedSecret()).toBe(before)
+  })
+})

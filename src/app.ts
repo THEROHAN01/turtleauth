@@ -4,12 +4,14 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import { config } from './config.js'
 import { Argon2Hasher } from './lib/hashing/argon2-hasher.js'
+import type { Hasher } from './lib/hashing/hasher.js'
 import { PostgresUserStore } from './services/user-store.js'
 import { PostgresSessionStore } from './services/session-store.js'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './services/auth-service.js'
 import { authErrorHandler, registerAuthRoutes } from './routes/auth-routes.js'
+import { sessionCookieName } from './routes/cookie.js'
 import { createPrismaClient } from './db/client.js'
-import { openApiDocument } from './docs/openapi.js'
+import { buildOpenApiDocument } from './docs/openapi.js'
 import type { PrismaClient } from '@prisma/client'
 
 /**
@@ -19,7 +21,7 @@ import type { PrismaClient } from '@prisma/client'
 
 export interface BuildAppOptions {
   /** Override for tests (cheap hash params keep the suite fast). */
-  hasher?: Argon2Hasher
+  hasher?: Hasher
   sessionPolicy?: SessionPolicy
   /** false for local dev over plain http; must be true in production. */
   secureCookies?: boolean
@@ -32,6 +34,8 @@ export interface BuildAppOptions {
    * adds locally — click a request, see the shape — isn't a production concern.
    */
   enableDocs?: boolean
+  /** Honour X-Forwarded-* headers. See TRUST_PROXY in config.ts before enabling. */
+  trustProxy?: boolean
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -46,6 +50,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     secureCookies = config.NODE_ENV === 'production',
     logger = config.NODE_ENV !== 'test',
     enableDocs = config.NODE_ENV !== 'production',
+    trustProxy = config.TRUST_PROXY,
   } = options
 
   // Track ownership: only a client THIS call created should be disconnected on close.
@@ -61,6 +66,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
      * and CPU before validation ever sees it.
      */
     bodyLimit: 64 * 1024, // 64 KB
+    trustProxy,
   })
 
   app.register(cookie)
@@ -71,7 +77,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
    * carries the session cookie automatically (same-origin, in the same browser tab).
    */
   if (enableDocs) {
-    app.register(swagger, { mode: 'static', specification: { document: openApiDocument } })
+    app.register(swagger, {
+      mode: 'static',
+      specification: { document: buildOpenApiDocument(sessionCookieName(secureCookies)) },
+    })
     app.register(swaggerUi, { routePrefix: '/docs' })
   }
 

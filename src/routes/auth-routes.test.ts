@@ -317,3 +317,40 @@ describe('full lifecycle', () => {
     expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: c2 } })).statusCode).toBe(200)
   })
 })
+
+describe('GET /docs/json', () => {
+  it('documents the cookie name the server actually sets', async () => {
+    const res = await app.inject({ method: 'GET', url: '/docs/json' })
+    const cookieAuth = res.json().components.securitySchemes.cookieAuth
+
+    // app is built with secureCookies:true, so the real cookie is __Host-sid.
+    const sessionCookie = (await app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: CREDS,
+    })).cookies[0]
+    expect(cookieAuth.name).toBe(sessionCookie!.name)
+  })
+})
+
+describe('client IP recorded on the session', () => {
+  async function recordedIp(trustProxy: boolean): Promise<string | null> {
+    const proxied = buildApp({ hasher: fastHasher, logger: false, prisma: db.prisma, trustProxy })
+    await proxied.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: CREDS,
+      headers: { 'x-forwarded-for': '203.0.113.7' },
+    })
+    const session = await db.prisma.session.findFirstOrThrow()
+    return session.ip
+  }
+
+  it('ignores X-Forwarded-For by default — a client could forge it', async () => {
+    expect(await recordedIp(false)).not.toBe('203.0.113.7')
+  })
+
+  it('uses X-Forwarded-For when a trusted proxy is configured', async () => {
+    expect(await recordedIp(true)).toBe('203.0.113.7')
+  })
+})

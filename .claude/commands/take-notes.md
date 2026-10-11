@@ -23,8 +23,9 @@ If a topic in the roadmap's checklist was not covered, leave it out — do not f
 
 `notes/module-<n>-<module-slug>/<k>-<submodule-slug>/notes.md`
 
-Folders already exist for every submodule of all six modules. Match the existing slug
-exactly; never create a parallel folder. Check with `ls notes/` first.
+Check `ls notes/` first. If the folder exists, match its slug exactly — never create a
+parallel folder. If it doesn't exist yet (only Module 1's do so far), create it, taking
+the slug from the module and submodule names in `notes/README.md`.
 
 If a `notes.md` already exists, **extend or revise it** rather than overwriting — we may
 revisit a topic after building, and later understanding should sharpen the note, not

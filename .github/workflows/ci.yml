@@ -18,6 +18,31 @@ jobs:
     strategy:
       matrix:
         node-version: [22, 24]
+
+    # The suite runs against a real Postgres (see discussions/02-postgres-persistence.md),
+    # so CI needs one too. Without it — and without DATABASE_URL — even `pnpm install`
+    # fails: its postinstall runs `prisma generate`, and prisma.config.ts refuses to load
+    # with the variable unset.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: turtleauth
+          POSTGRES_USER: turtleauth
+          POSTGRES_PASSWORD: turtleauth
+        ports:
+          - 5432:5432
+        # Wait for "ready to accept connections", not just "container started".
+        options: >-
+          --health-cmd "pg_isready -U turtleauth -d turtleauth"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+
+    env:
+      DATABASE_URL: postgresql://turtleauth:turtleauth@localhost:5432/turtleauth?schema=public
+      NODE_ENV: test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,5 +58,7 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm build
+
+      - run: pnpm exec prisma migrate deploy
 
       - run: pnpm test

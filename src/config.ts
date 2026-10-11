@@ -20,6 +20,16 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
 
   /**
+   * Trust X-Forwarded-For / -Proto from a reverse proxy in front of us.
+   *
+   * Off by default, and only turned on when a proxy really is there: with it on and NO
+   * proxy, any client can send its own X-Forwarded-For and plant a fake IP in the
+   * session's audit trail. With it off BEHIND a proxy, every session records the
+   * proxy's IP — useless, but at least not attacker-chosen.
+   */
+  TRUST_PROXY: z.stringbool().default(false),
+
+  /**
    * Argon2id work factor.
    *
    * MEASURED on this dev machine (node 22, x64) with `pnpm bench:hash`:
