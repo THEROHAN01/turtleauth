@@ -332,3 +332,25 @@ describe('GET /docs/json', () => {
     expect(cookieAuth.name).toBe(sessionCookie!.name)
   })
 })
+
+describe('client IP recorded on the session', () => {
+  async function recordedIp(trustProxy: boolean): Promise<string | null> {
+    const proxied = buildApp({ hasher: fastHasher, logger: false, prisma: db.prisma, trustProxy })
+    await proxied.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: CREDS,
+      headers: { 'x-forwarded-for': '203.0.113.7' },
+    })
+    const session = await db.prisma.session.findFirstOrThrow()
+    return session.ip
+  }
+
+  it('ignores X-Forwarded-For by default — a client could forge it', async () => {
+    expect(await recordedIp(false)).not.toBe('203.0.113.7')
+  })
+
+  it('uses X-Forwarded-For when a trusted proxy is configured', async () => {
+    expect(await recordedIp(true)).toBe('203.0.113.7')
+  })
+})

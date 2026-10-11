@@ -34,6 +34,8 @@ export interface BuildAppOptions {
    * adds locally — click a request, see the shape — isn't a production concern.
    */
   enableDocs?: boolean
+  /** Honour X-Forwarded-* headers. See TRUST_PROXY in config.ts before enabling. */
+  trustProxy?: boolean
 }
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -48,6 +50,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     secureCookies = config.NODE_ENV === 'production',
     logger = config.NODE_ENV !== 'test',
     enableDocs = config.NODE_ENV !== 'production',
+    trustProxy = config.TRUST_PROXY,
   } = options
 
   // Track ownership: only a client THIS call created should be disconnected on close.
@@ -63,6 +66,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
      * and CPU before validation ever sees it.
      */
     bodyLimit: 64 * 1024, // 64 KB
+    trustProxy,
   })
 
   app.register(cookie)
