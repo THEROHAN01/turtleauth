@@ -1,5 +1,12 @@
 import { randomBytes } from 'node:crypto'
-import type { AuthenticatedSession, Session, SessionId, User, UserId } from '../core/types.js'
+import type {
+  AuthenticatedSession,
+  Credential,
+  Session,
+  SessionId,
+  User,
+  UserId,
+} from '../core/types.js'
 import { asSessionId } from '../core/types.js'
 import { AuthError } from '../core/errors.js'
 import type { Hasher } from '../lib/hashing/hasher.js'
@@ -88,13 +95,44 @@ export class AuthService {
   async verifyPassword(email: string, password: string): Promise<boolean> {
     const normalisedEmail = this.normaliseEmail(email)
     const credential = await this.store.findCredentialByEmail(normalisedEmail)
+    return this.checkPassword(password, credential)
+  }
 
+  /**
+   * The one place a password is compared. Runs a full verify whether or not the
+   * credential exists, so both outcomes cost the same — see getDummyHash().
+   */
+  private async checkPassword(
+    password: string,
+    credential: Credential | undefined,
+  ): Promise<boolean> {
     if (!credential) {
       await this.hasher.verify(password, await this.getDummyHash())
       return false
     }
 
     return this.hasher.verify(password, credential.secret)
+  }
+
+  /**
+   * Transparent rehash: upgrade a stored hash made under weaker settings than current
+   * policy, e.g. after ARGON2_MEMORY_COST is raised.
+   *
+   * Only possible right after a successful verify — the one moment the plaintext exists
+   * server-side. Without this, raising the work factor protects new accounts only; every
+   * existing hash stays at the old cost until its owner happens to change their password.
+   *
+   * The extra hash() costs time on SUCCESSFUL logins only, so it reveals nothing to a
+   * caller who doesn't already hold the right password.
+   *
+   * Limitation: this upgrades PARAMS within one algorithm. A bcrypt hash never reaches
+   * here under an Argon2 policy, because Argon2Hasher cannot verify it — migrating
+   * across algorithms needs a verifier that dispatches on detectAlgorithm(). Not built
+   * until there is a legacy user base to migrate.
+   */
+  private async rehashIfNeeded(credential: Credential, password: string): Promise<void> {
+    if (!this.hasher.needsRehash(credential.secret)) return
+    await this.store.updatePasswordHash(credential.userId, await this.hasher.hash(password))
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -143,13 +181,16 @@ export class AuthService {
     context: { ip?: string | null; userAgent?: string | null } = {},
   ): Promise<AuthenticatedSession> {
     const normalisedEmail = this.normaliseEmail(email)
+    const credential = await this.store.findCredentialByEmail(normalisedEmail)
 
-    const ok = await this.verifyPassword(normalisedEmail, password)
-    if (!ok) throw AuthError.invalidCredentials('password verification failed')
+    const ok = await this.checkPassword(password, credential)
+    if (!ok || !credential) throw AuthError.invalidCredentials('password verification failed')
 
-    // verifyPassword already proved the credential exists, so a missing user here is a
-    // genuine inconsistency, not a failed login.
-    const user = await this.store.findUserByEmail(normalisedEmail)
+    await this.rehashIfNeeded(credential, password)
+
+    // The credential exists, so a missing user here is a genuine inconsistency, not a
+    // failed login.
+    const user = await this.store.findUserById(credential.userId)
     if (!user) throw AuthError.invalidCredentials('credential without user')
 
     const session = await this.createSession(user.id, context)
