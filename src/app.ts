@@ -4,6 +4,7 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import { config } from './config.js'
 import { Argon2Hasher } from './lib/hashing/argon2-hasher.js'
+import type { Hasher } from './lib/hashing/hasher.js'
 import { PostgresUserStore } from './services/user-store.js'
 import { PostgresSessionStore } from './services/session-store.js'
 import { AuthService, DEFAULT_SESSION_POLICY, type SessionPolicy } from './services/auth-service.js'
@@ -19,7 +20,7 @@ import type { PrismaClient } from '@prisma/client'
 
 export interface BuildAppOptions {
   /** Override for tests (cheap hash params keep the suite fast). */
-  hasher?: Argon2Hasher
+  hasher?: Hasher
   sessionPolicy?: SessionPolicy
   /** false for local dev over plain http; must be true in production. */
   secureCookies?: boolean
