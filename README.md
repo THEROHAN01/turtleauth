@@ -17,7 +17,7 @@ Postgres.
 | Version | `0.1.1` |
 | Module | 1 of 6 — Authentication Foundations (see [roadmap](#8-roadmap--whats-next)) |
 | Storage | Postgres (Prisma 7 + `@prisma/adapter-pg`) — in-memory stores from `v0.1.0` were fully replaced, not kept alongside |
-| Tests | 74 passing (`vitest`), run against a real Postgres instance |
+| Tests | 80 passing (`vitest`), run against a real Postgres instance |
 | CI | GitHub Actions — typecheck, build, test on Node 22 and 24 |
 | Endpoints | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/logout-all`, `GET /health` |
 | API docs | Swagger UI at `/docs` (dev/test only — see [§3](#3-getting-started)) |
@@ -31,8 +31,10 @@ Postgres.
 - **No email verification** — registration auto-creates a session on an unverified
   address (documented in `src/routes/auth-routes.ts`). Fine for sign-in today, not a
   proof of inbox ownership.
-- `src/server.ts` currently logs a **stale startup warning** claiming sessions are
-  in-memory; that was true before this module's Postgres increment and needs updating.
+- **No cross-algorithm hash migration yet.** Rehash-on-login upgrades Argon2 *params*;
+  a bcrypt hash can't be verified by `Argon2Hasher`, so importing a bcrypt user base
+  would need a verifier that dispatches on `detectAlgorithm()` (see
+  `AuthService.rehashIfNeeded`).
 
 ---
 
@@ -121,11 +123,12 @@ Design decisions worth knowing before changing this schema — see
 
 ### Password handling
 
-- **Argon2id** by default (OWASP first choice; memory-hard). A `Hasher` interface also
-  has a bcrypt implementation, to support migrating an *existing* bcrypt-hashed user base
-  onto Argon2id without a forced password reset — hashes are self-describing strings, so
-  `needsRehash()` can detect an outdated algorithm or weaker params and upgrade
-  transparently on next successful login.
+- **Argon2id** by default (OWASP first choice; memory-hard). Hashes are self-describing
+  strings, so on each successful login `needsRehash()` detects one made under weaker
+  params than current config and `AuthService` re-hashes it transparently — raising
+  `ARGON2_MEMORY_COST` upgrades existing users as they log in, with no forced reset.
+  A bcrypt implementation of the same `Hasher` interface exists for comparison and as
+  the groundwork for cross-algorithm migration (not wired yet — see known gaps).
 - **Timing-safe "no such user" path.** A login against a non-existent email still runs a
   real Argon2 verify (against a hash of random bytes, generated once from the *live*
   hasher instance and cached) so that "wrong password" and "no such user" take the same
@@ -145,11 +148,12 @@ otherwise put a 22+ `node` first on `PATH` before installing/running, or native 
 segfault under vitest's worker pool), `pnpm` 10, and Docker (for local Postgres).
 
 ```bash
-# 1. Install dependencies (builds argon2/bcrypt native addons via postinstall)
-pnpm install
-
-# 2. Copy env and adjust if needed (defaults already match docker-compose)
+# 1. Copy env first — `pnpm install`'s postinstall runs `prisma generate`, which
+#    refuses to start without DATABASE_URL. Defaults already match docker-compose.
 cp .env.example .env
+
+# 2. Install dependencies (builds argon2/bcrypt native addons)
+pnpm install
 
 # 3. Start Postgres (waits for the healthcheck, not just container start)
 pnpm db:up
@@ -192,6 +196,7 @@ reconnaissance tool for whoever finds the URL) — override with `enableDocs: tr
 | `ARGON2_MEMORY_COST` | no | `65536` (64 MiB) | KiB. Per-*concurrent-hash* cost — see comment in `src/config.ts` before raising it |
 | `ARGON2_TIME_COST` | no | `3` | passes |
 | `ARGON2_PARALLELISM` | no | `4` | |
+| `TRUST_PROXY` | no | `false` | `true` only behind a reverse proxy — otherwise clients can forge `X-Forwarded-For` |
 
 Run `pnpm bench:hash` on the **target** machine before changing the Argon2 params in
 production — the shipped defaults were measured on a dev laptop, not a production
@@ -323,7 +328,7 @@ pnpm db:up      # Postgres must be running — the suite runs against a real ins
 pnpm test
 ```
 
-74 tests across hashing, sessions, `AuthService`, and the HTTP routes (`app.inject()` —
+80 tests across hashing, sessions, `AuthService`, and the HTTP routes (`app.inject()` —
 no real socket). Tests run against one shared schema with `fileParallelism: false`,
 a deliberate trade-off documented in `discussions/02-postgres-persistence.md` §8 (Prisma
 bakes its schema name into generated SQL and ignores the connection's `search_path`,
