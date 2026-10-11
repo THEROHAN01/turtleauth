@@ -4,7 +4,7 @@ A Clerk-class authentication platform, built module by module, as a learning pro
 following the *Authentication Engineering Roadmap*. Each module is a sprint; each sprint
 ships a working increment of the service, not a toy.
 
-Current state: **Module 1 — Authentication Foundations**, shipped as `v0.1.1`.
+Current state: **Module 1 — Authentication Foundations**, shipped as `v0.1.2`.
 Password auth, server-side sessions, hardened cookies, HTTP layer — all backed by
 Postgres.
 
@@ -14,7 +14,7 @@ Postgres.
 
 | | |
 |---|---|
-| Version | `0.1.1` |
+| Version | `0.1.2` |
 | Module | 1 of 6 — Authentication Foundations (see [roadmap](#8-roadmap--whats-next)) |
 | Storage | Postgres (Prisma 7 + `@prisma/adapter-pg`) — in-memory stores from `v0.1.0` were fully replaced, not kept alongside |
 | Tests | 80 passing (`vitest`), run against a real Postgres instance |
@@ -362,7 +362,7 @@ One sprint per module, version `0.<module>.<increment>` pre-1.0 (see
 
 | Sprint | Module | Status |
 |---|---|---|
-| 1 | Authentication Foundations — password auth, sessions, cookies, Postgres | ✅ shipped, `v0.1.1` |
+| 1 | Authentication Foundations — password auth, sessions, cookies, Postgres | ✅ shipped, `v0.1.2` |
 | 2 | JWT + Token Architecture | not started |
 | 3 | Web Security + Auth Attacks (rate limiting, CSRF/XSS hardening) | not started |
 | 4 | OAuth 2.0 + OIDC + Social Login | not started |

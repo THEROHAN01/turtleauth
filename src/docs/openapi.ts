@@ -60,7 +60,7 @@ export function buildOpenApiDocument(cookieName: string): OpenAPIV3.Document {
     openapi: '3.0.3',
     info: {
       title: 'TurtleAuth',
-      version: '0.1.1',
+      version: '0.1.2',
       description:
         'Password authentication with server-side, Postgres-backed sessions. Session state ' +
         'lives in an httpOnly cookie (`sid` locally, `__Host-sid` in production) — "Try it ' +
